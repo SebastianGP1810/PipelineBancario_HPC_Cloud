@@ -112,13 +112,13 @@ El speedup global de **2.27x** se concentra en la fase de entrenamiento (2.33x).
 
 ## Requisitos
 
-pandas
-numpy
-scikit-learn
-lightgbm>=4.6.0
-xgboost>=3.2.0
-joblib
-matplotlib
+- pandas
+- numpy
+- scikit-learn
+- lightgbm>=4.6.0
+- xgboost>=3.2.0
+- joblib
+- matplotlib
 
 ---
 
