@@ -112,13 +112,14 @@ El speedup global de **2.27x** se concentra en la fase de entrenamiento (2.33x).
 
 ## Requisitos
 
-- pandas
-- numpy
-- scikit-learn
-- lightgbm>=4.6.0
-- xgboost>=3.2.0
-- joblib
-- matplotlib
+- pandas==3.0.3
+- numpy==2.4.6
+- scikit-learn==1.9.0
+- lightgbm==4.6.0
+- xgboost==3.2.0
+- joblib==1.5.3
+- matplotlib==3.11.0
+- psutil==7.2.2
 
 ---
 
@@ -127,5 +128,17 @@ El speedup global de **2.27x** se concentra en la fase de entrenamiento (2.33x).
 1. Descarga el dataset desde [Kaggle](https://www.kaggle.com/datasets/youngdaniel/loan-dataset) y coloca `application_train.csv` y `application_test.csv` en la misma carpeta que el notebook.
 2. Abre `ML_bancario_3.1.ipynb` en Jupyter o Google Colab.
 3. Ejecuta las celdas en orden. El notebook corre primero la versión secuencial y luego la paralela, reportando tiempos y speedup por fase al final.
+
+---
+## Reproducibilidad con Docker
+
+La imagen del entorno está publicada en DockerHub. Para reproducir el pipeline sin instalar nada localmente:
+
+\```bash
+docker pull rodie916/pipeline-bancario:latest
+docker compose up
+\```
+
+Abre http://localhost:8888 en el navegador y ejecuta el notebook.
 
 ---
