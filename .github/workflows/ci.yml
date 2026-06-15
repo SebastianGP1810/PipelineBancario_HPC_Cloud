@@ -1,0 +1,33 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Clonar repositorio
+        uses: actions/checkout@v3
+
+      - name: Configurar Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+
+      - name: Verificar instalación de librerías clave
+        run: |
+          python -c "import pandas; print('pandas OK')"
+          python -c "import lightgbm; print('lightgbm OK')"
+          python -c "import xgboost; print('xgboost OK')"
+          python -c "import joblib; print('joblib OK')"
+
+      - name: Build de imagen Docker
+        run: docker build -t pipeline-bancario .
