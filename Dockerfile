@@ -8,6 +8,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 RUN pip install --no-cache-dir notebook jupyterlab
 
+RUN apt-get update && apt-get install -y libgomp1
+
 COPY . .
 
 EXPOSE 8888
