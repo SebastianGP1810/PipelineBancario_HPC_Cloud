@@ -39,7 +39,7 @@ with st.sidebar:
     st.markdown("*El modelo se actualiza automáticamente via GitHub Actions cuando se sube nuevo dataset con el mensaje* `[entrenar]`")
 
 # ── Tab principal ─────────────────────────
-tab2 = st.tabs([ "📂 Predicción por lote (CSV)"])
+tab2, = st.tabs([ "📂 Predicción por lote (CSV)"])
 
 # ── TAB 2: Predicción por lote ───────────────
 with tab2:
