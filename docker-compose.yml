@@ -8,3 +8,11 @@ services:
       - .:/app
     environment:
       - JUPYTER_ENABLE_LAB=yes
+
+  streamlit:
+    build: .
+    ports:
+      - "8501:8501"
+    volumes:
+      - .:/app
+    command: streamlit run app.py --server.address=0.0.0.0 --server.port=8501
