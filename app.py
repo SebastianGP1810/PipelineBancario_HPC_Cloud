@@ -55,19 +55,22 @@ with tab1:
 
         if st.button("🚀 Predecir todos los registros", use_container_width=True):
             try:
-                # Eliminar TARGET si existe
                 if 'TARGET' in df_pred.columns:
                     df_pred = df_pred.drop(columns=['TARGET'])
+                if 'SK_ID_CURR' in df_pred.columns:
+                    df_pred = df_pred.drop(columns=['SK_ID_CURR'])
 
-                # Convertir columnas object a category
                 for col in df_pred.select_dtypes(include='object').columns:
                     df_pred[col] = df_pred[col].astype('category')
 
                 if tipo_mod == 'lgb':
-                    # Usar solo las columnas que conoce el modelo
                     cols_modelo = modelo.feature_name()
-                    cols_disponibles = [c for c in cols_modelo if c in df_pred.columns]
-                    df_pred = df_pred[cols_disponibles]
+                    for col in cols_modelo:
+                        if col not in df_pred.columns:
+                            df_pred[col] = np.nan
+                    df_pred = df_pred[cols_modelo]
+                    for col in df_pred.select_dtypes(include='object').columns:
+                        df_pred[col] = df_pred[col].astype('category')
                     probs = modelo.predict(df_pred)
                 else:
                     dmat = xgb.DMatrix(df_pred, enable_categorical=True)
@@ -126,23 +129,39 @@ with tab2:
 
             st.dataframe(df_new.head(5), use_container_width=True)
 
-            if st.button("Reemplazar datos y reentrenar", use_container_width=True):
+            if st.button("🔄 Reemplazar datos y reentrenar", use_container_width=True):
                 try:
                     with st.spinner("Guardando nuevo dataset..."):
                         df_new.to_csv("application_train.csv", index=False)
 
                     with st.spinner("Haciendo commit y push al repositorio..."):
                         import subprocess
-                        subprocess.run(["git", "config", "user.name", "Streamlit Bot"], check=True)
-                        subprocess.run(["git", "config", "user.email", "streamlit@bot.com"], check=True)
-                        subprocess.run(["git", "add", "application_train.csv"], check=True)
-                        subprocess.run(["git", "commit", "-m", "actualizar dataset de entrenamiento [entrenar]"], check=True)
-                        subprocess.run(["git", "push"], check=True)
+                        env = {
+                            **__import__('os').environ,
+                            'GIT_AUTHOR_NAME': 'Streamlit Bot',
+                            'GIT_AUTHOR_EMAIL': 'streamlit@bot.com',
+                            'GIT_COMMITTER_NAME': 'Streamlit Bot',
+                            'GIT_COMMITTER_EMAIL': 'streamlit@bot.com',
+                        }
+                        subprocess.run(
+                            ["git", "config", "--global", "user.name", "Streamlit Bot"],
+                            check=True, env=env
+                        )
+                        subprocess.run(
+                            ["git", "config", "--global", "user.email", "streamlit@bot.com"],
+                            check=True, env=env
+                        )
+                        subprocess.run(["git", "add", "application_train.csv"], check=True, env=env)
+                        subprocess.run(
+                            ["git", "commit", "-m", "actualizar dataset de entrenamiento [entrenar]"],
+                            check=True, env=env
+                        )
+                        subprocess.run(["git", "push"], check=True, env=env)
 
-                    st.success("Dataset subido al repositorio. GitHub Actions está reentrenando el modelo automáticamente.")
-                    st.info("El proceso tarda ~35-40 minutos. Cuando termine, recarga la página para ver la nueva versión del modelo en el sidebar.")
+                    st.success(" Dataset subido al repositorio. GitHub Actions está reentrenando el modelo automáticamente.")
+                    st.info(" El proceso tarda entre 35-40 minutos. Cuando termine, recarga la página para ver la nueva versión del modelo en el sidebar.")
 
                 except subprocess.CalledProcessError as e:
-                    st.error(f"Error al hacer push al repositorio: {e}")
+                    st.error(f" Error al hacer push al repositorio: {e}")
                 except Exception as e:
-                    st.error(f"Error inesperado: {e}")
+                    st.error(f" Error inesperado: {e}")
