@@ -1,5 +1,5 @@
 {
-  "version": "20260620_200256",
+  "version": "20260624_011836",
   "config_id": "LGB-1",
   "modelo": "LightGBM",
   "n_jobs": 4,
