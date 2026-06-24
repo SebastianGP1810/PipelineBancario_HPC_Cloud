@@ -53,15 +53,24 @@ with tab1:
         st.markdown(f"**Registros cargados:** {len(df_pred):,}")
         st.dataframe(df_pred.head(5), use_container_width=True)
 
-        if st.button("Predecir todos los registros", use_container_width=True):
-            for col in df_pred.select_dtypes(include='object').columns:
-                df_pred[col] = df_pred[col].astype('category')
-
+        if st.button("🚀 Predecir todos los registros", use_container_width=True):
             try:
+                # Eliminar TARGET si existe
+                if 'TARGET' in df_pred.columns:
+                    df_pred = df_pred.drop(columns=['TARGET'])
+
+                # Convertir columnas object a category
+                for col in df_pred.select_dtypes(include='object').columns:
+                    df_pred[col] = df_pred[col].astype('category')
+
                 if tipo_mod == 'lgb':
+                    # Usar solo las columnas que conoce el modelo
+                    cols_modelo = modelo.feature_name()
+                    cols_disponibles = [c for c in cols_modelo if c in df_pred.columns]
+                    df_pred = df_pred[cols_disponibles]
                     probs = modelo.predict(df_pred)
                 else:
-                    dmat  = xgb.DMatrix(df_pred, enable_categorical=True)
+                    dmat = xgb.DMatrix(df_pred, enable_categorical=True)
                     probs = modelo.predict(dmat)
 
                 df_pred['probabilidad_incumplimiento'] = probs
@@ -80,7 +89,7 @@ with tab1:
 
                 csv_resultado = df_pred.to_csv(index=False).encode('utf-8')
                 st.download_button(
-                    "Descargar resultados completos",
+                    "⬇️ Descargar resultados completos",
                     csv_resultado,
                     "predicciones.csv",
                     "text/csv"
