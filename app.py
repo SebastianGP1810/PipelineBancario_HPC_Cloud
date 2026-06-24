@@ -65,17 +65,13 @@ with tab1:
                     for col in cols_modelo:
                         if col not in df_pred.columns:
                             df_pred[col] = np.nan
-                    df_pred = df_pred[cols_modelo]
-                    # Usar exactamente las mismas categorías con las que se entrenó
-                    cat_cols = df_pred.select_dtypes(include='object').columns.tolist()
-                    for i, col in enumerate(cat_cols):
-                        if i < len(modelo.pandas_categorical):
-                            df_pred[col] = pd.Categorical(
-                                df_pred[col],
-                                categories=modelo.pandas_categorical[i]
-                            )
-                        else:
-                            df_pred[col] = df_pred[col].astype('category')
+                    df_pred = df_pred[cols_modelo].copy()
+                    for i, cats in enumerate(modelo.pandas_categorical):
+                        col = cols_modelo[i]
+                        df_pred[col] = pd.Categorical(
+                            df_pred[col].astype(str),
+                            categories=[str(c) for c in cats]
+                        )
                     probs = modelo.predict(df_pred)
 
                 df_pred['probabilidad_incumplimiento'] = probs
