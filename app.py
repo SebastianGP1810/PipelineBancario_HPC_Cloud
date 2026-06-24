@@ -60,19 +60,19 @@ with tab1:
                 if 'SK_ID_CURR' in df_pred.columns:
                     df_pred = df_pred.drop(columns=['SK_ID_CURR'])
 
-                for col in df_pred.select_dtypes(include='object').columns:
-                    df_pred[col] = df_pred[col].astype('category')
-
                 if tipo_mod == 'lgb':
                     cols_modelo = modelo.feature_name()
                     for col in cols_modelo:
                         if col not in df_pred.columns:
                             df_pred[col] = np.nan
                     df_pred = df_pred[cols_modelo]
+                    # Convertir a string en lugar de category para evitar conflicto
                     for col in df_pred.select_dtypes(include='object').columns:
-                        df_pred[col] = df_pred[col].astype('category')
+                        df_pred[col] = df_pred[col].astype(str)
                     probs = modelo.predict(df_pred)
                 else:
+                    for col in df_pred.select_dtypes(include='object').columns:
+                        df_pred[col] = df_pred[col].astype('category')
                     dmat = xgb.DMatrix(df_pred, enable_categorical=True)
                     probs = modelo.predict(dmat)
 
