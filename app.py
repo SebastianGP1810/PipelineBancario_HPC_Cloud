@@ -66,15 +66,17 @@ with tab1:
                         if col not in df_pred.columns:
                             df_pred[col] = np.nan
                     df_pred = df_pred[cols_modelo]
-                    # Convertir a string en lugar de category para evitar conflicto
-                    for col in df_pred.select_dtypes(include='object').columns:
-                        df_pred[col] = df_pred[col].astype(str)
+                    # Usar exactamente las mismas categorías con las que se entrenó
+                    cat_cols = df_pred.select_dtypes(include='object').columns.tolist()
+                    for i, col in enumerate(cat_cols):
+                        if i < len(modelo.pandas_categorical):
+                            df_pred[col] = pd.Categorical(
+                                df_pred[col],
+                                categories=modelo.pandas_categorical[i]
+                            )
+                        else:
+                            df_pred[col] = df_pred[col].astype('category')
                     probs = modelo.predict(df_pred)
-                else:
-                    for col in df_pred.select_dtypes(include='object').columns:
-                        df_pred[col] = df_pred[col].astype('category')
-                    dmat = xgb.DMatrix(df_pred, enable_categorical=True)
-                    probs = modelo.predict(dmat)
 
                 df_pred['probabilidad_incumplimiento'] = probs
                 df_pred['clasificacion'] = np.where(probs >= 0.5, 'ALTO RIESGO', 'BAJO RIESGO')
@@ -136,13 +138,14 @@ with tab2:
 
                     with st.spinner("Haciendo commit y push al repositorio..."):
                         import subprocess
-                        env = {
-                            **__import__('os').environ,
-                            'GIT_AUTHOR_NAME': 'Streamlit Bot',
-                            'GIT_AUTHOR_EMAIL': 'streamlit@bot.com',
-                            'GIT_COMMITTER_NAME': 'Streamlit Bot',
-                            'GIT_COMMITTER_EMAIL': 'streamlit@bot.com',
-                        }
+                        import os
+                        env = {**os.environ}
+                        
+                        # Marcar /app como directorio seguro para git
+                        subprocess.run(
+                            ["git", "config", "--global", "--add", "safe.directory", "/app"],
+                            check=True, env=env
+                        )
                         subprocess.run(
                             ["git", "config", "--global", "user.name", "Streamlit Bot"],
                             check=True, env=env
