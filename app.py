@@ -6,8 +6,6 @@ import json
 import os
 import subprocess
 import xgboost as xgb
-from sklearn.impute import SimpleImputer
-from sklearn.preprocessing import RobustScaler
 
 st.set_page_config(page_title="Pipeline Bancario", page_icon="🏦", layout="wide")
 
@@ -15,13 +13,12 @@ st.markdown("# 🏦 Pipeline Bancario — Predicción de Riesgo Crediticio")
 st.markdown("Universidad del Pacífico · Grupo 2 · 2026-I")
 st.divider()
 
-# ── Constantes del pipeline ───────────────────
-COLUMNA_ANOMALA   = "DAYS_EMPLOYED"
-VALOR_ANOMALO     = 365243
-UMBRAL_OBS        = 0.5
-UMBRAL_ATTR       = 0.6
+# ── Constantes ────────────────────────────────
+COLUMNA_ANOMALA = "DAYS_EMPLOYED"
+VALOR_ANOMALO   = 365243
+UMBRAL_OBS      = 0.5
 
-# ── Cargar modelo y metadata ─────────────────
+# ── Cargar modelo y metadata ──────────────────
 @st.cache_resource
 def cargar_modelo():
     with open("modelo_actual.pkl", "rb") as f:
@@ -38,67 +35,64 @@ except FileNotFoundError:
     st.error("No se encontró el modelo entrenado.")
     st.stop()
 
-# ── Preprocesamiento para predicción ─────────
+# ── Preprocesamiento para predicción ──────────
 def preprocesar_para_prediccion(df_nuevo):
     """
     Preprocesa el CSV de predicción usando las columnas y categorías
-    que el modelo tiene guardadas internamente (pandas_categorical).
-    
-    Enfoque:
+    exactas que el modelo tiene guardadas (pandas_categorical).
+
+    Pasos:
     1. Corregir anomalía DAYS_EMPLOYED
-    2. Limpiar nulos excesivos
-    3. Imputar valores faltantes
-    4. Alinear columnas exactamente a las del modelo
-    5. Aplicar las pandas_categorical del modelo por índice
-    
-    NO depende del tamaño del train para detectar tipos de columnas —
-    eso era el error raíz anterior (mismatch de 101 vs 98 categóricas).
+    2. Eliminar columnas no predictoras (TARGET, SK_ID_CURR)
+    3. Limpiar filas con demasiados nulos
+    4. Alinear columnas al modelo (agregar faltantes como NaN)
+    5. Imputar con fillna (NO SimpleImputer — elimina columnas all-NaN)
+    6. Aplicar pandas_categorical del modelo por índice
     """
     df = df_nuevo.copy()
+
+    # Guardar IDs antes de procesar
     ids = df['SK_ID_CURR'].values if 'SK_ID_CURR' in df.columns else np.arange(len(df))
 
     # Paso 1 — Corrección anomalía
     if COLUMNA_ANOMALA in df.columns:
         df[COLUMNA_ANOMALA] = df[COLUMNA_ANOMALA].replace(VALOR_ANOMALO, np.nan)
 
-    # Quitar columnas no predictoras
+    # Paso 2 — Quitar columnas no predictoras
     for col in ['TARGET', 'SK_ID_CURR']:
         if col in df.columns:
             df = df.drop(columns=[col])
 
-    # Paso 2 — Limpiar filas con muchos nulos
+    # Paso 3 — Limpiar filas con muchos nulos
     n_attr = df.shape[1]
     obs_vacios = (df.isnull().sum(axis=1) / n_attr) >= UMBRAL_OBS
     df = df.loc[~obs_vacios].copy()
 
-    # Paso 3 — Alinear columnas al modelo ANTES de imputar
+    # Paso 4 — Alinear columnas exactamente al modelo
     cols_modelo = modelo.feature_name() if tipo_mod == 'lgb' else modelo.feature_names
     for col in cols_modelo:
         if col not in df.columns:
             df[col] = np.nan
     df = df[cols_modelo].copy()
 
-    # Paso 4 — Imputar según tipo de columna
-    # Las columnas categóricas las determinamos por las pandas_categorical del modelo
-    # (no por detección automática que cambia según el tamaño del dataset)
+    # Paso 5 — Imputar usando fillna (no SimpleImputer)
+    # SimpleImputer elimina columnas all-NaN causando mismatch de shape
     n_cats = len(modelo.pandas_categorical) if tipo_mod == 'lgb' else 0
-    cols_cat_idx = list(range(n_cats))  # los primeros n_cats features son categóricos
-    cols_cat  = [cols_modelo[i] for i in cols_cat_idx if i < len(cols_modelo)]
-    cols_rest = [col for col in cols_modelo if col not in cols_cat]
+    cols_cat = [cols_modelo[i] for i in range(n_cats) if i < len(cols_modelo)]
+    cols_num = [col for col in cols_modelo if col not in cols_cat]
 
-    # Imputar categóricas con 'Desconocido'
-    if cols_cat:
-        imp_cat = SimpleImputer(strategy='constant', fill_value='Desconocido')
-        df[cols_cat] = imp_cat.fit_transform(df[cols_cat].astype(str))
+    # Categóricas: rellenar con 'Desconocido'
+    for col in cols_cat:
+        df[col] = df[col].fillna('Desconocido').astype(str)
 
-    # Imputar numéricas con mediana
-    cols_num = [col for col in cols_rest if df[col].dtype in ['float64', 'int64', 'Int64', 'float32']]
-    if cols_num:
-        imp_num = SimpleImputer(strategy='median')
-        df[cols_num] = imp_num.fit_transform(df[cols_num])
+    # Numéricas: rellenar con mediana (columna por columna para evitar errores)
+    for col in cols_num:
+        if df[col].isnull().any():
+            mediana = df[col].median()
+            df[col] = df[col].fillna(0.0 if pd.isna(mediana) else mediana)
 
-    # Paso 5 — Aplicar pandas_categorical del modelo por índice
-    # Esto es lo que garantiza que las categorías coincidan exactamente
+    # Paso 6 — Aplicar pandas_categorical del modelo por índice
+    # Garantiza que las categorías coincidan exactamente con las del entrenamiento
     for i, cats in enumerate(modelo.pandas_categorical):
         col = cols_modelo[i]
         df[col] = pd.Categorical(
@@ -117,7 +111,7 @@ def predecir(df_listo):
         return modelo.predict(dmat)
 
 
-# ── Sidebar ──────────────────────────────────
+# ── Sidebar ───────────────────────────────────
 with st.sidebar:
     st.markdown("## Modelo actual")
     st.success(f"**{metadata['config_id']}** ({metadata['modelo']})")
@@ -127,15 +121,16 @@ with st.sidebar:
     st.divider()
     st.markdown("*El modelo se actualiza automáticamente via GitHub Actions cuando se sube nuevo dataset con el mensaje* `[entrenar]`")
 
-# ── Tabs ─────────────────────────────────────
+# ── Tabs ──────────────────────────────────────
 tab1, tab2 = st.tabs(["Predicción por lote (CSV)", "🔄 Reentrenar modelo"])
 
-# ── TAB 1: Predicción ────────────────────────
+# ── TAB 1: Predicción ─────────────────────────
 with tab1:
     st.markdown("### Sube un CSV con múltiples clientes")
     st.markdown("""
-    El archivo debe tener las mismas columnas que `application_test.csv` de Kaggle.
-    No necesita columna `TARGET`. El modelo predice la probabilidad de incumplimiento.
+    El archivo debe tener las mismas columnas que el dataset de Kaggle.
+    Puede incluir o no la columna `TARGET` — se ignora automáticamente.
+    El modelo predice la probabilidad de incumplimiento crediticio.
     """)
 
     archivo = st.file_uploader("Subir CSV de predicción", type="csv", key="pred")
@@ -155,14 +150,18 @@ with tab1:
                 resultado = pd.DataFrame({
                     'SK_ID_CURR': ids[:n],
                     'probabilidad_incumplimiento': np.round(probs[:n], 4),
-                    'clasificacion': np.where(probs[:n] >= 0.5, 'ALTO RIESGO', 'BAJO RIESGO')
+                    'clasificacion': np.where(
+                        probs[:n] >= 0.5, 'ALTO RIESGO', 'BAJO RIESGO'
+                    )
                 })
 
                 st.divider()
                 col1, col2, col3 = st.columns(3)
                 col1.metric("Total clientes", f"{len(resultado):,}")
-                col2.metric("Alto riesgo", f"{(resultado['clasificacion']=='ALTO RIESGO').sum():,}")
-                col3.metric("Bajo riesgo", f"{(resultado['clasificacion']=='BAJO RIESGO').sum():,}")
+                col2.metric("Alto riesgo",
+                            f"{(resultado['clasificacion']=='ALTO RIESGO').sum():,}")
+                col3.metric("Bajo riesgo",
+                            f"{(resultado['clasificacion']=='BAJO RIESGO').sum():,}")
 
                 st.dataframe(resultado.head(50), use_container_width=True)
 
@@ -175,17 +174,19 @@ with tab1:
             except Exception as e:
                 st.error(f"Error al predecir: {e}")
 
-# ── TAB 2: Reentrenamiento ───────────────────
+# ── TAB 2: Reentrenamiento ────────────────────
 with tab2:
     st.markdown("### Reentrenar el modelo con nueva data")
     st.markdown("""
-    Sube un CSV de entrenamiento (con columna `TARGET`).
+    Sube un CSV de entrenamiento con columna `TARGET`.
     El sistema reemplazará `application_train.csv`, disparará el reentrenamiento
     automático via GitHub Actions y actualizará el modelo desplegado.
     """)
     st.warning("El CSV debe incluir la columna `TARGET` (0 = pagará, 1 = incumplirá).")
 
-    archivo_train = st.file_uploader("Subir nuevo CSV de entrenamiento", type="csv", key="retrain")
+    archivo_train = st.file_uploader(
+        "Subir nuevo CSV de entrenamiento", type="csv", key="retrain"
+    )
 
     if archivo_train:
         df_new = pd.read_csv(archivo_train)
@@ -197,8 +198,10 @@ with tab2:
             conteo = df_new['TARGET'].value_counts()
             col1, col2, col3 = st.columns(3)
             col1.metric("Total registros", f"{len(df_new):,}")
-            col2.metric("Pagará (TARGET=0)", f"{int(conteo.get(0, conteo.get(0.0, 0))):,}")
-            col3.metric("Incumplirá (TARGET=1)", f"{int(conteo.get(1, conteo.get(1.0, 0))):,}")
+            col2.metric("Pagará (TARGET=0)",
+                        f"{int(conteo.get(0, conteo.get(0.0, 0))):,}")
+            col3.metric("Incumplirá (TARGET=1)",
+                        f"{int(conteo.get(1, conteo.get(1.0, 0))):,}")
 
             st.dataframe(df_new.head(5), use_container_width=True)
 
@@ -213,26 +216,38 @@ with tab2:
                             st.error("No se encontró PAT_TOKEN. Revisa el docker-compose.yml.")
                             st.stop()
 
-                        repo_url = f"https://x-access-token:{token}@github.com/SebastianGP1810/PipelineBancario_HPC_Cloud.git"
-
+                        repo_url = (
+                            f"https://x-access-token:{token}@github.com/"
+                            "SebastianGP1810/PipelineBancario_HPC_Cloud.git"
+                        )
                         comandos = [
-                            ["git", "config", "--global", "--add", "safe.directory", "/app"],
+                            ["git", "config", "--global", "--add",
+                             "safe.directory", "/app"],
                             ["git", "config", "user.name", "Streamlit Bot"],
                             ["git", "config", "user.email", "streamlit@bot.com"],
                             ["git", "add", "application_train.csv"],
-                            ["git", "commit", "-m", "actualizar dataset de entrenamiento [entrenar]"],
+                            ["git", "commit", "-m",
+                             "actualizar dataset de entrenamiento [entrenar]"],
                             ["git", "push", repo_url, "HEAD:main"],
                         ]
                         for cmd in comandos:
                             r = subprocess.run(cmd, capture_output=True, text=True)
                             salida = r.stdout + r.stderr
                             if r.returncode != 0:
-                                if cmd[1] == "commit" and "nothing to commit" in salida:
+                                if (cmd[1] == "commit" and
+                                        "nothing to commit" in salida):
                                     continue
-                                raise RuntimeError(f"'{' '.join(cmd[:2])}' falló: {salida.strip()}")
+                                raise RuntimeError(
+                                    f"'{' '.join(cmd[:2])}' falló: {salida.strip()}"
+                                )
 
-                    st.success("✅ Dataset subido. GitHub Actions está reentrenando el modelo.")
-                    st.info("🕐 El proceso tarda ~35-40 min. Recarga la página al terminar para ver la nueva versión.")
+                    st.success(
+                        "✅ Dataset subido. GitHub Actions está reentrenando el modelo."
+                    )
+                    st.info(
+                        "🕐 El proceso tarda ~35-40 min. "
+                        "Recarga la página al terminar para ver la nueva versión."
+                    )
 
                 except Exception as e:
                     st.error(f"Error al hacer push al repositorio: {e}")
