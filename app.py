@@ -41,44 +41,63 @@ except FileNotFoundError:
     st.error("No se encontró el modelo entrenado. Ejecuta primero el workflow de entrenamiento en GitHub Actions.")
     st.stop()
 
-
-# ── Preprocesamiento idéntico al entrenamiento ──────────────
 def preprocesar_para_prediccion(df_nuevo):
     """
-    Aplica el MISMO preprocesamiento del entrenamiento a los datos nuevos.
-    Combina el train original con los datos nuevos para que la imputación
-    y el escalado sean consistentes, luego separa solo los datos a predecir.
+    Preprocesa los datos nuevos usando EXACTAMENTE el mismo flujo
+    que train_and_export.py: concatena train + test, limpia, procesa,
+    y devuelve solo las filas del test alineadas al modelo.
     """
-    train_original = pd.read_csv("application_train.csv")
-    train_original[COLUMNA_ANOMALA] = train_original[COLUMNA_ANOMALA].replace(VALOR_ANOMALO, np.nan)
+    # Cargar train original
+    train = pd.read_csv("application_train.csv")
+    train[COLUMNA_ANOMALA] = train[COLUMNA_ANOMALA].replace(VALOR_ANOMALO, np.nan)
+    if 'TARGET' not in train.columns:
+        train['TARGET'] = 0
 
-    df_pred = df_nuevo.copy()
-    if COLUMNA_ANOMALA in df_pred.columns:
-        df_pred[COLUMNA_ANOMALA] = df_pred[COLUMNA_ANOMALA].replace(VALOR_ANOMALO, np.nan)
+    # Preparar datos nuevos como "test"
+    test = df_nuevo.copy()
+    if COLUMNA_ANOMALA in test.columns:
+        test[COLUMNA_ANOMALA] = test[COLUMNA_ANOMALA].replace(VALOR_ANOMALO, np.nan)
+    if 'TARGET' in test.columns:
+        test = test.drop(columns=['TARGET'])
 
-    if 'TARGET' not in train_original.columns:
-        train_original['TARGET'] = 0
-    if 'TARGET' in df_pred.columns:
-        df_pred = df_pred.drop(columns=['TARGET'])
+    # Guardar IDs antes de procesar
+    ids = test['SK_ID_CURR'].values if 'SK_ID_CURR' in test.columns else np.arange(len(test))
 
-    # Limpieza + preprocesamiento idénticos al entrenamiento
-    df_limpio = limpiar_nulos_excesivos(train_original, df_pred, verbose=False)
-    df_procesado = preprocesar_datos(df_limpio, umbral_categorica=UMBRAL_CATEGORICA, verbose=False)
+    # Concatenar igual que train_and_export.py
+    test_copy = test.copy()
+    test_copy['TARGET'] = 2  # marcador
+    df = pd.concat([train, test_copy], axis=0, ignore_index=True)
 
-    # Quedarnos solo con los datos nuevos (marcados con TARGET == 2)
-    df_listo = df_procesado[df_procesado['TARGET'] == 2].drop(columns=['TARGET'])
+    # Limpieza de nulos (mismos umbrales)
+    predictoras = df.drop(columns=['TARGET'])
+    n_obs, n_attr = predictoras.shape
+    obs_vacios = (predictoras.isnull().sum(axis=1) / n_attr) >= 0.5
+    df = df.loc[~obs_vacios].copy()
+    predictoras = df.drop(columns=['TARGET'])
+    n_obs, n_attr = predictoras.shape
+    attr_vacios = (predictoras.isnull().sum(axis=0) / n_obs) >= 0.6
+    if attr_vacios.sum() > 0:
+        cols = predictoras.columns[~attr_vacios].tolist() + ['TARGET']
+        df = df[cols]
 
-    # Alinear a las columnas que el modelo espera
+    # Preprocesamiento (misma lógica)
+    df = preprocesar_datos(df, umbral_categorica=UMBRAL_CATEGORICA, verbose=False)
+
+    # Separar solo los datos nuevos
+    df_test = df[df['TARGET'] == 2].drop(columns=['TARGET']).copy()
+
+    # Alinear columnas al modelo
     if tipo_mod == 'lgb':
         cols_modelo = modelo.feature_name()
     else:
         cols_modelo = modelo.feature_names
 
     for col in cols_modelo:
-        if col not in df_listo.columns:
-            df_listo[col] = np.nan
-    df_listo = df_listo[cols_modelo].copy()
-    return df_listo
+        if col not in df_test.columns:
+            df_test[col] = np.nan
+    df_test = df_test[cols_modelo].copy()
+
+    return df_test, ids
 
 
 def predecir(df_listo):
@@ -124,9 +143,8 @@ with tab1:
 
         if st.button("🚀 Predecir todos los registros", use_container_width=True):
             try:
-                with st.spinner("Preprocesando datos y generando predicciones..."):
-                    ids = df_pred['SK_ID_CURR'].values if 'SK_ID_CURR' in df_pred.columns else np.arange(len(df_pred))
-                    df_listo = preprocesar_para_prediccion(df_pred)
+                with st.spinner("Preprocesando datos (esto puede tardar 1-2 minutos)..."):
+                    df_listo, ids = preprocesar_para_prediccion(df_pred)
                     probs = predecir(df_listo)
 
                 n = min(len(ids), len(probs))
@@ -154,7 +172,6 @@ with tab1:
 
             except Exception as e:
                 st.error(f"Error al predecir: {e}")
-
 # ── TAB 2: Reentrenamiento ───────────────────
 with tab2:
     st.markdown("### Reentrenar el modelo con nueva data")
