@@ -43,33 +43,25 @@ except FileNotFoundError:
 
 
 def preprocesar_para_prediccion(df_nuevo):
-    """
-    Preprocesa los datos nuevos usando EXACTAMENTE el mismo flujo
-    que train_and_export.py: concatena train + test, limpia, procesa,
-    y devuelve solo las filas del test alineadas al modelo.
-    """
-    # Cargar train original
     train = pd.read_csv("application_train.csv")
     train[COLUMNA_ANOMALA] = train[COLUMNA_ANOMALA].replace(VALOR_ANOMALO, np.nan)
     if 'TARGET' not in train.columns:
         train['TARGET'] = 0
 
-    # Preparar datos nuevos como "test"
     test = df_nuevo.copy()
     if COLUMNA_ANOMALA in test.columns:
         test[COLUMNA_ANOMALA] = test[COLUMNA_ANOMALA].replace(VALOR_ANOMALO, np.nan)
     if 'TARGET' in test.columns:
         test = test.drop(columns=['TARGET'])
 
-    # Guardar IDs antes de procesar
     ids = test['SK_ID_CURR'].values if 'SK_ID_CURR' in test.columns else np.arange(len(test))
 
-    # Concatenar igual que train_and_export.py
-    test_copy = test.copy()
-    test_copy['TARGET'] = 2  # marcador
-    df = pd.concat([train, test_copy], axis=0, ignore_index=True)
+    # Marcar test con TARGET=2 y concatenar manualmente
+    test_marcado = test.copy()
+    test_marcado['TARGET'] = 2
+    df = pd.concat([train, test_marcado], axis=0, ignore_index=True)
 
-    # Limpieza de nulos (mismos umbrales)
+    # Limpieza manual (igual que train_and_export.py)
     predictoras = df.drop(columns=['TARGET'])
     n_obs, n_attr = predictoras.shape
     obs_vacios = (predictoras.isnull().sum(axis=1) / n_attr) >= 0.5
@@ -81,18 +73,14 @@ def preprocesar_para_prediccion(df_nuevo):
         cols = predictoras.columns[~attr_vacios].tolist() + ['TARGET']
         df = df[cols]
 
-    # Preprocesamiento (misma lógica)
-    df = preprocesar_datos(df, umbral_categorica=UMBRAL_CATEGORICA, verbose=False)
+    # Preprocesamiento usando la misma función
+    df_procesado = preprocesar_datos(df, umbral_categorica=UMBRAL_CATEGORICA, verbose=False)
 
-    # Separar solo los datos nuevos
-    df_test = df[df['TARGET'] == 2].drop(columns=['TARGET']).copy()
+    # Separar solo el test
+    df_test = df_procesado[df_procesado['TARGET'] == 2].drop(columns=['TARGET']).copy()
 
     # Alinear columnas al modelo
-    if tipo_mod == 'lgb':
-        cols_modelo = modelo.feature_name()
-    else:
-        cols_modelo = modelo.feature_names
-
+    cols_modelo = modelo.feature_name() if tipo_mod == 'lgb' else modelo.feature_names
     for col in cols_modelo:
         if col not in df_test.columns:
             df_test[col] = np.nan
@@ -144,7 +132,7 @@ with tab1:
 
         if st.button("🚀 Predecir todos los registros", use_container_width=True):
             try:
-                with st.spinner("Preprocesando datos (esto puede tardar 1-2 minutos)..."):
+                with st.spinner("Preprocesando datos (puede tardar 1-2 min)..."):
                     df_listo, ids = preprocesar_para_prediccion(df_pred)
                     probs = predecir(df_listo)
 
