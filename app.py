@@ -6,23 +6,20 @@ import json
 import os
 import subprocess
 import xgboost as xgb
-
-# Reutilizamos EXACTAMENTE las mismas funciones de preprocesamiento
-# que usa train_and_export.py para entrenar. Esto garantiza que los
-# datos que llegan al modelo tengan el mismo formato que en el entrenamiento.
-from train_and_export import (
-    limpiar_nulos_excesivos,
-    preprocesar_datos,
-    COLUMNA_ANOMALA,
-    VALOR_ANOMALO,
-    UMBRAL_CATEGORICA,
-)
+from sklearn.impute import SimpleImputer
+from sklearn.preprocessing import RobustScaler
 
 st.set_page_config(page_title="Pipeline Bancario", page_icon="🏦", layout="wide")
 
 st.markdown("# 🏦 Pipeline Bancario — Predicción de Riesgo Crediticio")
 st.markdown("Universidad del Pacífico · Grupo 2 · 2026-I")
 st.divider()
+
+# ── Constantes del pipeline ───────────────────
+COLUMNA_ANOMALA   = "DAYS_EMPLOYED"
+VALOR_ANOMALO     = 365243
+UMBRAL_OBS        = 0.5
+UMBRAL_ATTR       = 0.6
 
 # ── Cargar modelo y metadata ─────────────────
 @st.cache_resource
@@ -38,74 +35,89 @@ try:
     modelo   = contenido_modelo['modelo']
     tipo_mod = contenido_modelo['tipo']
 except FileNotFoundError:
-    st.error("No se encontró el modelo entrenado. Ejecuta primero el workflow de entrenamiento en GitHub Actions.")
+    st.error("No se encontró el modelo entrenado.")
     st.stop()
 
-
+# ── Preprocesamiento para predicción ─────────
 def preprocesar_para_prediccion(df_nuevo):
-    train = pd.read_csv("application_train.csv")
-    train[COLUMNA_ANOMALA] = train[COLUMNA_ANOMALA].replace(VALOR_ANOMALO, np.nan)
-    if 'TARGET' not in train.columns:
-        train['TARGET'] = 0
+    """
+    Preprocesa el CSV de predicción usando las columnas y categorías
+    que el modelo tiene guardadas internamente (pandas_categorical).
+    
+    Enfoque:
+    1. Corregir anomalía DAYS_EMPLOYED
+    2. Limpiar nulos excesivos
+    3. Imputar valores faltantes
+    4. Alinear columnas exactamente a las del modelo
+    5. Aplicar las pandas_categorical del modelo por índice
+    
+    NO depende del tamaño del train para detectar tipos de columnas —
+    eso era el error raíz anterior (mismatch de 101 vs 98 categóricas).
+    """
+    df = df_nuevo.copy()
+    ids = df['SK_ID_CURR'].values if 'SK_ID_CURR' in df.columns else np.arange(len(df))
 
-    test = df_nuevo.copy()
-    if COLUMNA_ANOMALA in test.columns:
-        test[COLUMNA_ANOMALA] = test[COLUMNA_ANOMALA].replace(VALOR_ANOMALO, np.nan)
-    if 'TARGET' in test.columns:
-        test = test.drop(columns=['TARGET'])
+    # Paso 1 — Corrección anomalía
+    if COLUMNA_ANOMALA in df.columns:
+        df[COLUMNA_ANOMALA] = df[COLUMNA_ANOMALA].replace(VALOR_ANOMALO, np.nan)
 
-    ids = test['SK_ID_CURR'].values if 'SK_ID_CURR' in test.columns else np.arange(len(test))
+    # Quitar columnas no predictoras
+    for col in ['TARGET', 'SK_ID_CURR']:
+        if col in df.columns:
+            df = df.drop(columns=[col])
 
-    # Marcar test con TARGET=2 y concatenar manualmente
-    test_marcado = test.copy()
-    test_marcado['TARGET'] = 2
-    df = pd.concat([train, test_marcado], axis=0, ignore_index=True)
-
-    # Limpieza manual (igual que train_and_export.py)
-    predictoras = df.drop(columns=['TARGET'])
-    n_obs, n_attr = predictoras.shape
-    obs_vacios = (predictoras.isnull().sum(axis=1) / n_attr) >= 0.5
+    # Paso 2 — Limpiar filas con muchos nulos
+    n_attr = df.shape[1]
+    obs_vacios = (df.isnull().sum(axis=1) / n_attr) >= UMBRAL_OBS
     df = df.loc[~obs_vacios].copy()
-    predictoras = df.drop(columns=['TARGET'])
-    n_obs, n_attr = predictoras.shape
-    attr_vacios = (predictoras.isnull().sum(axis=0) / n_obs) >= 0.6
-    if attr_vacios.sum() > 0:
-        cols = predictoras.columns[~attr_vacios].tolist() + ['TARGET']
-        df = df[cols]
 
-    # Preprocesamiento usando la misma función
-    df_procesado = preprocesar_datos(df, umbral_categorica=UMBRAL_CATEGORICA, verbose=False)
-
-    # Separar solo el test
-    df_test = df_procesado[df_procesado['TARGET'] == 2].drop(columns=['TARGET']).copy()
-
-    # Alinear columnas al modelo
+    # Paso 3 — Alinear columnas al modelo ANTES de imputar
     cols_modelo = modelo.feature_name() if tipo_mod == 'lgb' else modelo.feature_names
     for col in cols_modelo:
-        if col not in df_test.columns:
-            df_test[col] = np.nan
-    df_test = df_test[cols_modelo].copy()
+        if col not in df.columns:
+            df[col] = np.nan
+    df = df[cols_modelo].copy()
 
-    return df_test, ids
+    # Paso 4 — Imputar según tipo de columna
+    # Las columnas categóricas las determinamos por las pandas_categorical del modelo
+    # (no por detección automática que cambia según el tamaño del dataset)
+    n_cats = len(modelo.pandas_categorical) if tipo_mod == 'lgb' else 0
+    cols_cat_idx = list(range(n_cats))  # los primeros n_cats features son categóricos
+    cols_cat  = [cols_modelo[i] for i in cols_cat_idx if i < len(cols_modelo)]
+    cols_rest = [col for col in cols_modelo if col not in cols_cat]
+
+    # Imputar categóricas con 'Desconocido'
+    if cols_cat:
+        imp_cat = SimpleImputer(strategy='constant', fill_value='Desconocido')
+        df[cols_cat] = imp_cat.fit_transform(df[cols_cat].astype(str))
+
+    # Imputar numéricas con mediana
+    cols_num = [col for col in cols_rest if df[col].dtype in ['float64', 'int64', 'Int64', 'float32']]
+    if cols_num:
+        imp_num = SimpleImputer(strategy='median')
+        df[cols_num] = imp_num.fit_transform(df[cols_num])
+
+    # Paso 5 — Aplicar pandas_categorical del modelo por índice
+    # Esto es lo que garantiza que las categorías coincidan exactamente
+    for i, cats in enumerate(modelo.pandas_categorical):
+        col = cols_modelo[i]
+        df[col] = pd.Categorical(
+            df[col].astype(str),
+            categories=[str(c) for c in cats]
+        )
+
+    return df, ids
 
 
 def predecir(df_listo):
-    """Ejecuta la predicción según el tipo de modelo."""
     if tipo_mod == 'lgb':
-        cols_modelo = modelo.feature_name()
-        for i, cats in enumerate(modelo.pandas_categorical):
-            col = cols_modelo[i]
-            df_listo[col] = pd.Categorical(
-                df_listo[col].astype(str),
-                categories=[str(c) for c in cats]
-            )
         return modelo.predict(df_listo)
     else:
         dmat = xgb.DMatrix(df_listo, enable_categorical=True)
         return modelo.predict(dmat)
 
 
-# ── Sidebar con info del modelo ──────────────
+# ── Sidebar ──────────────────────────────────
 with st.sidebar:
     st.markdown("## Modelo actual")
     st.success(f"**{metadata['config_id']}** ({metadata['modelo']})")
@@ -115,15 +127,18 @@ with st.sidebar:
     st.divider()
     st.markdown("*El modelo se actualiza automáticamente via GitHub Actions cuando se sube nuevo dataset con el mensaje* `[entrenar]`")
 
-# ── Tabs principales ─────────────────────────
+# ── Tabs ─────────────────────────────────────
 tab1, tab2 = st.tabs(["Predicción por lote (CSV)", "🔄 Reentrenar modelo"])
 
-# ── TAB 1: Predicción por lote ───────────────
+# ── TAB 1: Predicción ────────────────────────
 with tab1:
     st.markdown("### Sube un CSV con múltiples clientes")
-    st.markdown("El archivo debe tener las mismas columnas que el dataset original de Kaggle.")
+    st.markdown("""
+    El archivo debe tener las mismas columnas que `application_test.csv` de Kaggle.
+    No necesita columna `TARGET`. El modelo predice la probabilidad de incumplimiento.
+    """)
 
-    archivo = st.file_uploader("Subir CSV", type="csv", key="pred")
+    archivo = st.file_uploader("Subir CSV de predicción", type="csv", key="pred")
 
     if archivo:
         df_pred = pd.read_csv(archivo)
@@ -132,14 +147,14 @@ with tab1:
 
         if st.button("🚀 Predecir todos los registros", use_container_width=True):
             try:
-                with st.spinner("Preprocesando datos (puede tardar 1-2 min)..."):
+                with st.spinner("Preprocesando y generando predicciones..."):
                     df_listo, ids = preprocesar_para_prediccion(df_pred)
                     probs = predecir(df_listo)
 
                 n = min(len(ids), len(probs))
                 resultado = pd.DataFrame({
                     'SK_ID_CURR': ids[:n],
-                    'probabilidad_incumplimiento': probs[:n],
+                    'probabilidad_incumplimiento': np.round(probs[:n], 4),
                     'clasificacion': np.where(probs[:n] >= 0.5, 'ALTO RIESGO', 'BAJO RIESGO')
                 })
 
@@ -151,12 +166,10 @@ with tab1:
 
                 st.dataframe(resultado.head(50), use_container_width=True)
 
-                csv_resultado = resultado.to_csv(index=False).encode('utf-8')
+                csv_out = resultado.to_csv(index=False).encode('utf-8')
                 st.download_button(
                     "⬇️ Descargar resultados completos",
-                    csv_resultado,
-                    "predicciones.csv",
-                    "text/csv"
+                    csv_out, "predicciones.csv", "text/csv"
                 )
 
             except Exception as e:
@@ -170,8 +183,7 @@ with tab2:
     El sistema reemplazará `application_train.csv`, disparará el reentrenamiento
     automático via GitHub Actions y actualizará el modelo desplegado.
     """)
-
-    st.warning("El CSV debe tener la misma estructura que el dataset original de Kaggle, incluyendo la columna `TARGET`.")
+    st.warning("El CSV debe incluir la columna `TARGET` (0 = pagará, 1 = incumplirá).")
 
     archivo_train = st.file_uploader("Subir nuevo CSV de entrenamiento", type="csv", key="retrain")
 
@@ -180,13 +192,13 @@ with tab2:
         st.markdown(f"**Registros cargados:** {len(df_new):,}")
 
         if 'TARGET' not in df_new.columns:
-            st.error("El CSV no tiene columna TARGET. Asegúrate de subir el dataset de entrenamiento.")
+            st.error("El CSV no tiene columna TARGET.")
         else:
             conteo = df_new['TARGET'].value_counts()
             col1, col2, col3 = st.columns(3)
             col1.metric("Total registros", f"{len(df_new):,}")
-            col2.metric("Pagará (TARGET=0)", f"{conteo.get(0, 0):,}")
-            col3.metric("Incumplirá (TARGET=1)", f"{conteo.get(1, 0):,}")
+            col2.metric("Pagará (TARGET=0)", f"{int(conteo.get(0, conteo.get(0.0, 0))):,}")
+            col3.metric("Incumplirá (TARGET=1)", f"{int(conteo.get(1, conteo.get(1.0, 0))):,}")
 
             st.dataframe(df_new.head(5), use_container_width=True)
 
@@ -198,7 +210,7 @@ with tab2:
                     with st.spinner("Haciendo commit y push al repositorio..."):
                         token = os.getenv("PAT_TOKEN", "")
                         if not token:
-                            st.error("No se encontró PAT_TOKEN en el contenedor. Revisa el docker-compose.yml.")
+                            st.error("No se encontró PAT_TOKEN. Revisa el docker-compose.yml.")
                             st.stop()
 
                         repo_url = f"https://x-access-token:{token}@github.com/SebastianGP1810/PipelineBancario_HPC_Cloud.git"
@@ -215,13 +227,12 @@ with tab2:
                             r = subprocess.run(cmd, capture_output=True, text=True)
                             salida = r.stdout + r.stderr
                             if r.returncode != 0:
-                                # 'git commit' devuelve 1 si no hay cambios: lo toleramos
                                 if cmd[1] == "commit" and "nothing to commit" in salida:
                                     continue
                                 raise RuntimeError(f"'{' '.join(cmd[:2])}' falló: {salida.strip()}")
 
-                    st.success("✅ Dataset subido al repositorio. GitHub Actions está reentrenando el modelo automáticamente.")
-                    st.info("🕐 El proceso tarda entre 35-40 minutos. Cuando termine, recarga la página para ver la nueva versión del modelo en el sidebar.")
+                    st.success("✅ Dataset subido. GitHub Actions está reentrenando el modelo.")
+                    st.info("🕐 El proceso tarda ~35-40 min. Recarga la página al terminar para ver la nueva versión.")
 
                 except Exception as e:
                     st.error(f"Error al hacer push al repositorio: {e}")
