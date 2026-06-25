@@ -41,6 +41,7 @@ except FileNotFoundError:
     st.error("No se encontró el modelo entrenado. Ejecuta primero el workflow de entrenamiento en GitHub Actions.")
     st.stop()
 
+
 def preprocesar_para_prediccion(df_nuevo):
     """
     Preprocesa los datos nuevos usando EXACTAMENTE el mismo flujo
@@ -172,6 +173,7 @@ with tab1:
 
             except Exception as e:
                 st.error(f"Error al predecir: {e}")
+
 # ── TAB 2: Reentrenamiento ───────────────────
 with tab2:
     st.markdown("### Reentrenar el modelo con nueva data")

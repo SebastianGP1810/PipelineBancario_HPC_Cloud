@@ -18,4 +18,5 @@ services:
     environment:
       - STREAMLIT_SERVER_ENABLE_XSRF_PROTECTION=false
       - STREAMLIT_SERVER_MAX_UPLOAD_SIZE=500
+      - PAT_TOKEN=${PAT_TOKEN}
     command: streamlit run app.py --server.address=0.0.0.0 --server.port=8501 --server.maxUploadSize=500
