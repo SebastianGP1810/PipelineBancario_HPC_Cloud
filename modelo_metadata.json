@@ -1,10 +1,10 @@
 {
-  "version": "20260625_060508",
+  "version": "20260625_073210",
   "config_id": "LGB-1",
   "modelo": "LightGBM",
   "n_jobs": 4,
-  "roc_auc": 0.7155,
-  "f1_score": 0.2585,
+  "roc_auc": 0.7185,
+  "f1_score": 0.2594,
   "params": {
     "learning_rate": 0.05,
     "num_leaves": 31
