@@ -1,12 +1,12 @@
 {
-  "version": "20260624_234514",
-  "config_id": "LGB-1",
+  "version": "20260625_042605",
+  "config_id": "LGB-4",
   "modelo": "LightGBM",
   "n_jobs": 4,
-  "roc_auc": 0.7185,
-  "f1_score": 0.2594,
+  "roc_auc": 0.7143,
+  "f1_score": 0.0,
   "params": {
-    "learning_rate": 0.05,
-    "num_leaves": 31
+    "learning_rate": 0.01,
+    "num_leaves": 127
   }
 }
